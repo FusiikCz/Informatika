@@ -3,7 +3,6 @@
 Tento repozitář obsahuje implementace socket serveru a klienta ve čtyřech různých programovacích jazycích. Všechny implementace používají **thread-per-client** architekturu, kde každý připojený klient je obsluhován samostatným vláknem.
 
 ## Struktura repozitáře
-
 ```
 Informatika/
 ├── C++/          # POSIX socket implementace
