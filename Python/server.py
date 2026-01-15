@@ -26,14 +26,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Paleta barev pro uživatele (ANSI escape kódy)
+USER_COLORS = [
+    '\033[31m',  # Červená
+    '\033[32m',  # Zelená
+    '\033[33m',  # Žlutá
+    '\033[34m',  # Modrá
+    '\033[35m',  # Magenta
+    '\033[36m',  # Cyan
+    '\033[91m',  # Světle červená
+    '\033[92m',  # Světle zelená
+    '\033[93m',  # Světle žlutá
+    '\033[94m',  # Světle modrá
+    '\033[95m',  # Světle magenta
+    '\033[96m',  # Světle cyan
+]
+
 # Struktura pro uložení informací o klientovi
-# (socket, address, username, p2p_port, last_heartbeat, last_message_time, message_count)
+# (socket, address, username, p2p_port, last_heartbeat, last_message_time, message_count, color_code)
 # address je (IP, port) - port, na kterém se klient připojil k serveru
 # p2p_port je port, na kterém klient naslouchá pro P2P připojení
 # last_heartbeat je čas posledního úspěšného heartbeat
 # last_message_time je čas poslední zprávy pro rate limiting
 # message_count je počet zpráv v aktuálním okně
-clients: List[Tuple[socket.socket, Tuple[str, int], str, int, float, float, int]] = []  # (socket, address, username, p2p_port, last_heartbeat, last_message_time, message_count)
+# color_code je ANSI escape kód pro barvu uživatele
+clients: List[Tuple[socket.socket, Tuple[str, int], str, int, float, float, int, str]] = []  # (socket, address, username, p2p_port, last_heartbeat, last_message_time, message_count, color_code)
 clients_lock = threading.Lock()  # Zámek pro thread-safe přístup
 server_running = threading.Event()
 server_running.set()
@@ -113,6 +130,19 @@ def receive_message(sock: socket.socket, timeout: float = MESSAGE_TIMEOUT) -> Op
         return None
 
 
+def get_user_color(client_index: int) -> str:
+    """
+    Získá barvu pro uživatele na základě indexu (cyklicky)
+    
+    Args:
+        client_index: Index klienta v seznamu
+        
+    Returns:
+        ANSI escape kód pro barvu
+    """
+    return USER_COLORS[client_index % len(USER_COLORS)]
+
+
 def check_rate_limit(client_socket: socket.socket) -> bool:
     """
     Kontrola rate limitingu pro klienta
@@ -125,16 +155,16 @@ def check_rate_limit(client_socket: socket.socket) -> bool:
     """
     current_time = time.time()
     with clients_lock:
-        for i, (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count) in enumerate(clients):
+        for i, (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count, color) in enumerate(clients):
             if sock == client_socket:
                 # Kontrola, zda uplynulo dost času pro reset okna
                 if current_time - last_msg_time >= RATE_LIMIT_WINDOW:
                     # Reset okna
-                    clients[i] = (sock, addr, uname, p2p_port, last_hb, current_time, 1)
+                    clients[i] = (sock, addr, uname, p2p_port, last_hb, current_time, 1, color)
                     return True
                 elif msg_count < RATE_LIMIT_MESSAGES:
                     # Zvýšení počtu zpráv
-                    clients[i] = (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count + 1)
+                    clients[i] = (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count + 1, color)
                     return True
                 else:
                     # Rate limit překročen
@@ -151,9 +181,9 @@ def update_heartbeat(client_socket: socket.socket):
     """
     current_time = time.time()
     with clients_lock:
-        for i, (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count) in enumerate(clients):
+        for i, (sock, addr, uname, p2p_port, last_hb, last_msg_time, msg_count, color) in enumerate(clients):
             if sock == client_socket:
-                clients[i] = (sock, addr, uname, p2p_port, current_time, last_msg_time, msg_count)
+                clients[i] = (sock, addr, uname, p2p_port, current_time, last_msg_time, msg_count, color)
                 break
 
 
@@ -167,18 +197,18 @@ def heartbeat_monitor():
         disconnected = []
         
         with clients_lock:
-            for client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count in clients:
+            for client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color in clients:
                 # Kontrola, zda klient neodpovídá příliš dlouho
                 if current_time - last_heartbeat > HEARTBEAT_TIMEOUT * 2:
                     logger.warning(f"Klient {username} ({address}) neodpovídá na heartbeat - odpojování")
-                    disconnected.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count))
+                    disconnected.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color))
                 else:
                     # Odeslání ping zprávy
                     try:
                         send_message(client_sock, "PING")
                     except Exception as e:
                         logger.warning(f"Nelze odeslat ping klientovi {username} ({address}): {e}")
-                        disconnected.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count))
+                        disconnected.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color))
         
         # Odstranění odpojených klientů
         if disconnected:
@@ -208,7 +238,7 @@ def broadcast_message(message: str, exclude_socket: Optional[socket.socket] = No
     disconnected_clients = []
     
     with clients_lock:
-        for client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count in clients:
+        for client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color in clients:
             if exclude_socket and client_sock == exclude_socket:
                 continue
             
@@ -216,10 +246,10 @@ def broadcast_message(message: str, exclude_socket: Optional[socket.socket] = No
                 if send_message(client_sock, message):
                     sent_count += 1
                 else:
-                    disconnected_clients.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count))
+                    disconnected_clients.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color))
             except Exception as e:
                 logger.error(f"Chyba při broadcastu klientovi {address}: {e}")
-                disconnected_clients.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count))
+                disconnected_clients.append((client_sock, address, username, p2p_port, last_heartbeat, last_msg_time, msg_count, color))
         
         # Odstranění odpojených klientů
         for client_info in disconnected_clients:
@@ -273,9 +303,13 @@ def handle_client(client_socket: socket.socket, address: Tuple[str, int]):
                 client_socket.close()
                 return
             
-            # Přidání s heartbeat a rate limiting informacemi
-            clients.append((client_socket, address, username, p2p_port, current_time, current_time, 0))
-            logger.info(f"Celkem klientů: {len(clients)}")
+            # Přiřazení barvy uživateli (cyklicky z palety)
+            user_color = get_user_color(len(clients))
+            color_code = user_color.replace('\033[', '').replace('m', '')  # Extrahujeme číslo barvy
+            
+            # Přidání s heartbeat, rate limiting a barvou
+            clients.append((client_socket, address, username, p2p_port, current_time, current_time, 0, color_code))
+            logger.info(f"Celkem klientů: {len(clients)}, barva pro {username}: {color_code}")
         
         # Získání počtu připojených uživatelů
         with clients_lock:
@@ -330,14 +364,14 @@ def handle_client(client_socket: socket.socket, address: Tuple[str, int]):
                     break
                 elif command == "/list":
                     with clients_lock:
-                        user_list = ", ".join([u for _, _, u, _, _, _, _ in clients])
+                        user_list = ", ".join([u for _, _, u, _, _, _, _, _ in clients])
                     send_message(client_socket, f"Připojení uživatelé: {user_list}")
                 elif command == "/getpeer" and len(message.split()) >= 2:
                     # Získání P2P informací o uživateli
                     target_username = message.split()[1]
                     with clients_lock:
                         found = False
-                        for sock, (ip, port), uname, peer_port, _, _, _ in clients:
+                        for sock, (ip, port), uname, peer_port, _, _, _, _ in clients:
                             if uname.lower() == target_username.lower():
                                 send_message(client_socket, f"PEER_INFO:{uname}:{ip}:{peer_port}")
                                 found = True
@@ -352,7 +386,7 @@ def handle_client(client_socket: socket.socket, address: Tuple[str, int]):
                     
                     with clients_lock:
                         found = False
-                        for sock, addr, uname, _, _, _, _ in clients:
+                        for sock, addr, uname, _, _, _, _, _ in clients:
                             if uname.lower() == target_username.lower():
                                 send_message(sock, f"[PM od {username}] {pm_message}")
                                 send_message(client_socket, f"INFO: Soukromá zpráva odeslána {uname}")
@@ -365,7 +399,7 @@ def handle_client(client_socket: socket.socket, address: Tuple[str, int]):
                     # Seznam všech uživatelů s jejich P2P informacemi
                     with clients_lock:
                         peer_list = []
-                        for sock, (ip, port), uname, peer_port, _, _, _ in clients:
+                        for sock, (ip, port), uname, peer_port, _, _, _, _ in clients:
                             peer_list.append(f"{uname} ({ip}:{peer_port})")
                         send_message(client_socket, f"P2P informace:\n" + "\n".join(peer_list))
                 elif command == "/broadcast" and len(message.split()) > 1:
@@ -395,7 +429,17 @@ Pro odeslání zprávy jednoduše napište text a stiskněte Enter."""
             else:
                 # Chat zpráva - broadcast všem klientům (včetně odesílatele, aby viděl svou zprávu)
                 current_time = datetime.now().strftime("%H:%M")
-                chat_message = f"[{current_time}] {username}: {message}"
+                
+                # Získání barvy uživatele
+                user_color_code = "37"  # Výchozí bílá
+                with clients_lock:
+                    for sock, _, uname, _, _, _, _, color in clients:
+                        if sock == client_socket:
+                            user_color_code = color
+                            break
+                
+                # Přidání informace o barvě do zprávy
+                chat_message = f"[COLOR:{user_color_code}][{current_time}] {username}: {message}"
                 logger.info(f"Chat zpráva od {username}: {message}")
                 
                 # Broadcast všem klientům (včetně odesílatele)

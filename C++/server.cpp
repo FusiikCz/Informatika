@@ -19,6 +19,7 @@
 #include <iomanip>
 #include <sstream>
 #include <chrono>
+#include <string>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -33,6 +34,22 @@ const double HEARTBEAT_TIMEOUT = 100.0;   // Timeout pro heartbeat odpověď (se
 const int RATE_LIMIT_MESSAGES = 10;      // Maximální počet zpráv
 const double RATE_LIMIT_WINDOW = 1.0;    // Časové okno v sekundách
 
+// Paleta barev pro uživatele (ANSI escape kódy - pouze čísla)
+const std::vector<std::string> USER_COLORS = {
+    "31",  // Červená
+    "32",  // Zelená
+    "33",  // Žlutá
+    "34",  // Modrá
+    "35",  // Magenta
+    "36",  // Cyan
+    "91",  // Světle červená
+    "92",  // Světle zelená
+    "93",  // Světle žlutá
+    "94",  // Světle modrá
+    "95",  // Světle magenta
+    "96",  // Světle cyan
+};
+
 // Struktura pro uložení informací o klientovi
 struct ClientInfo {
     int socket;
@@ -41,6 +58,7 @@ struct ClientInfo {
     double last_heartbeat;  // Čas posledního úspěšného heartbeat
     double last_message_time;  // Čas poslední zprávy pro rate limiting
     int message_count;  // Počet zpráv v aktuálním okně
+    std::string color_code;  // ANSI escape kód pro barvu uživatele
 };
 
 // Sdílený seznam klientů
@@ -115,6 +133,13 @@ std::string get_current_time() {
     oss << std::setfill('0') << std::setw(2) << timeinfo->tm_hour << ":"
         << std::setw(2) << timeinfo->tm_min;
     return oss.str();
+}
+
+/**
+ * Získá barvu pro uživatele na základě indexu (cyklicky)
+ */
+std::string get_user_color(int client_index) {
+    return USER_COLORS[client_index % USER_COLORS.size()];
 }
 
 /**
@@ -283,8 +308,9 @@ void handle_client(int client_fd) {
                 return;
             }
             double current_time = get_current_timestamp();
-            clients.push_back({client_fd, username, p2p_port, current_time, current_time, 0});
-            std::cout << "Klient připojen: " << username << ". Celkem klientů: " << clients.size() << std::endl;
+            std::string user_color = get_user_color(clients.size());
+            clients.push_back({client_fd, username, p2p_port, current_time, current_time, 0, user_color});
+            std::cout << "Klient připojen: " << username << ". Celkem klientů: " << clients.size() << ", barva: " << user_color << std::endl;
         }
         
         // Získání počtu připojených uživatelů
@@ -396,9 +422,23 @@ void handle_client(int client_fd) {
                     send_message(client_fd, "ERROR: Neznámý příkaz. Použijte /help");
                 }
             } else {
-                // Chat zpráva - broadcast všem klientům s časovým razítkem
+                // Chat zpráva - broadcast všem klientům s časovým razítkem a barvou
                 std::string current_time = get_current_time();
-                std::string chat_message = "[" + current_time + "] " + username + ": " + message;
+                
+                // Získání barvy uživatele
+                std::string user_color_code = "37";  // Výchozí bílá
+                {
+                    std::lock_guard<std::mutex> lock(clients_mutex);
+                    for (const auto& client : clients) {
+                        if (client.socket == client_fd) {
+                            user_color_code = client.color_code;
+                            break;
+                        }
+                    }
+                }
+                
+                // Přidání informace o barvě do zprávy
+                std::string chat_message = "[COLOR:" + user_color_code + "][" + current_time + "] " + username + ": " + message;
                 std::cout << "Chat zpráva od " << username << ": " << message << std::endl;
                 broadcast_message(chat_message);
             }

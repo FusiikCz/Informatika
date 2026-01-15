@@ -226,15 +226,29 @@ int main() {
         } else if (response.find("P2P informace:") == 0) {
             // Seznam P2P informací (cyan)
             std::cout << "\n" << Colors::CYAN << response << Colors::RESET << std::endl;
+        } else if (response.find("[COLOR:") == 0 && response.find(":") != std::string::npos) {
+            // Chat zpráva s barvou uživatele
+            // Formát: "[COLOR:XX][HH:MM] Uživatel: zpráva"
+            size_t color_start = response.find("[COLOR:") + 7;
+            size_t color_end = response.find("]", color_start);
+            if (color_end != std::string::npos) {
+                std::string color_code = response.substr(color_start, color_end - color_start);
+                // Odstranění [COLOR:XX] prefixu
+                std::string message_without_color = response.substr(color_end + 1);
+                // Použití barvy uživatele
+                std::cout << "\n\033[" << color_code << "m" << message_without_color << Colors::RESET << std::endl;
+            } else {
+                std::cout << "\n" << response << std::endl;
+            }
         } else if (response.find("[") == 0 && response.find(":") != std::string::npos && 
                    response.find("ERROR") == std::string::npos && 
                    response.find("INFO") == std::string::npos) {
-            // Chat zpráva od uživatele s časovým razítkem (zeleně)
+            // Chat zpráva od uživatele s časovým razítkem (zeleně) - fallback
             std::cout << "\n" << Colors::BRIGHT_GREEN << response << Colors::RESET << std::endl;
         } else if (response.find(":") != std::string::npos && 
                    response.find("ERROR") == std::string::npos && 
                    response.find("INFO") == std::string::npos) {
-            // Chat zpráva od uživatele bez časového razítka (zeleně)
+            // Chat zpráva od uživatele bez časového razítka (zeleně) - fallback
             std::cout << "\n" << Colors::BRIGHT_GREEN << response << Colors::RESET << std::endl;
         } else if (response.find("ERROR") == 0) {
             // Chyby (červeně)

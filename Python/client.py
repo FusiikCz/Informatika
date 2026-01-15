@@ -5,6 +5,7 @@ import logging
 import sys
 import threading
 import time
+import re
 from typing import Optional
 
 # ANSI escape kódy pro barvy
@@ -163,12 +164,26 @@ def receive_messages_thread(sock: socket.socket, running: threading.Event):
                 elif message.startswith("P2P informace:"):
                     # Seznam P2P informací (cyan)
                     print(f"\n{Colors.CYAN}{message}{Colors.RESET}")
+                elif message.startswith("[COLOR:") and ":" in message:
+                    # Chat zpráva s barvou uživatele
+                    # Formát: "[COLOR:XX][HH:MM] Uživatel: zpráva"
+                    import re
+                    color_match = re.match(r'\[COLOR:(\d+)\]', message)
+                    if color_match:
+                        color_code = color_match.group(1)
+                        # Odstranění [COLOR:XX] prefixu
+                        message_without_color = re.sub(r'\[COLOR:\d+\]', '', message)
+                        # Použití barvy uživatele
+                        user_color = f'\033[{color_code}m'
+                        print(f"\n{user_color}{message_without_color}{Colors.RESET}")
+                    else:
+                        print(f"\n{message}")
                 elif message.startswith("[") and ":" in message and not message.startswith("ERROR") and not message.startswith("INFO"):
-                    # Chat zpráva od uživatele s časovým razítkem (zeleně)
+                    # Chat zpráva od uživatele s časovým razítkem (zeleně) - fallback
                     # Formát: "[HH:MM] Uživatel: zpráva"
                     print(f"\n{Colors.BRIGHT_GREEN}{message}{Colors.RESET}")
                 elif ":" in message and not message.startswith("ERROR") and not message.startswith("INFO"):
-                    # Chat zpráva od uživatele bez časového razítka (zeleně)
+                    # Chat zpráva od uživatele bez časového razítka (zeleně) - fallback
                     print(f"\n{Colors.BRIGHT_GREEN}{message}{Colors.RESET}")
                 elif message.startswith("ERROR"):
                     # Chyby (červeně)
