@@ -2,7 +2,7 @@
  * Peer-to-Peer (P2P) socket implementace v C++
  * Každý peer může současně fungovat jako server i klient
  * 
- * Kompatibilní s: Python, Java, C# peery (stejný protokol)
+ * Kompatibilní s: Python peery (stejný protokol)
  * 
  * Kompilace:
  *   g++ -std=c++11 -pthread peer2peer.cpp -o peer2peer

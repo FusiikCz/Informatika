@@ -1,14 +1,13 @@
 # Socket Server/Client Implementace
 
-Tento repozitář obsahuje implementace socket serveru a klienta ve čtyřech různých programovacích jazycích. Všechny implementace používají **thread-per-client** architekturu, kde každý připojený klient je obsluhován samostatným vláknem.
+Tento repozitář obsahuje implementace socket serveru a klienta ve dvou programovacích jazycích. Všechny implementace používají **thread-per-client** architekturu, kde každý připojený klient je obsluhován samostatným vláknem.
 
 ## Struktura repozitáře
 ```
 Informatika/
 ├── C++/          # POSIX socket implementace
 ├── Python/       # Python socket modul implementace
-├── Java/         # Java ServerSocket/Socket implementace
-├── C#/           # C# TcpListener/TcpClient implementace
+├── P2P/          # Peer-to-Peer implementace
 └── ReadMe.md     # Tento soubor
 ```
 
@@ -23,20 +22,6 @@ Informatika/
 - **Soubory:** `server.py`, `client.py`
 - **Technologie:** socket modul, threading modul
 - **Vlastnosti:** Jednoduchý a čitelný kód, multiplatformní
-
-### Java
-- **Soubory:** `Server.java`, `Client.java`
-- **Technologie:** ServerSocket, Socket, Thread
-- **Vlastnosti:** Object-oriented přístup, try-with-resources
-
-### C#
-- **Soubory:** `Server.cs`, `Client.cs`
-- **Technologie:** TcpListener, TcpClient, Thread
-- **Vlastnosti:** .NET framework, moderní C# syntax
-
-
-### Vyžaduje
-**Poznámka:** Vyžaduje .NET Framework nebo .NET Core/.NET 5+
 
 ## Konfigurace
 
@@ -68,8 +53,7 @@ Všechny implementace poskytují:
 Pro detailnější informace o konkrétní implementaci se podívejte do README.md souboru v příslušné složce:
 - [C++ README](C++/README.md)
 - [Python README](Python/README.md)
-- [Java README](Java/README.md)
-- [C# README](C#/README.md)
+- [P2P README](P2P/README.md)
 
 ## Poznámky
 

@@ -4,7 +4,26 @@ import struct
 import logging
 import sys
 import threading
+import time
 from typing import Optional
+
+# ANSI escape kódy pro barvy
+class Colors:
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    # Barvy textu
+    BLACK = '\033[30m'
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    YELLOW = '\033[33m'
+    BLUE = '\033[34m'
+    MAGENTA = '\033[35m'
+    CYAN = '\033[36m'
+    WHITE = '\033[37m'
+    # Světlé barvy
+    BRIGHT_BLUE = '\033[94m'
+    BRIGHT_GREEN = '\033[92m'
+    BRIGHT_YELLOW = '\033[93m'
 
 # Konfigurace
 DEFAULT_HOST = '127.0.0.1'
@@ -114,15 +133,52 @@ def receive_messages_thread(sock: socket.socket, running: threading.Event):
             # Použijeme kratší timeout pro kontrolu, ale neukončíme spojení při timeoutu
             message = receive_message(sock, timeout=2.0)
             if message:
-                # Rozlišení mezi systémovými zprávami a chat zprávami
-                if message.startswith("Server:"):
-                    print(f"\n[SYSTEM] {message}")
+                # Zpracování heartbeat ping
+                if message == "PING":
+                    # Odpověď na ping
+                    send_message(sock, "PONG")
+                    continue
+                
+                # Zpracování P2P informací
+                if message.startswith("PEER_INFO:"):
+                    # Formát: PEER_INFO:username:ip:port
+                    parts = message.split(":")
+                    if len(parts) >= 4:
+                        peer_username = parts[1]
+                        peer_ip = parts[2]
+                        peer_port = parts[3]
+                        print(f"\n[INFO] P2P informace o {peer_username}:")
+                        print(f"  IP: {peer_ip}")
+                        print(f"  Port: {peer_port}")
+                        print(f"  Pro připojení použijte P2P aplikaci:")
+                        print(f"    cd P2P/Python")
+                        print(f"    python peer2peer.py")
+                        print(f"    /connect {peer_ip} {peer_port}")
+                elif message.startswith("[PM od"):
+                    # Soukromá zpráva přes server (magenta)
+                    print(f"\n{Colors.MAGENTA}{message}{Colors.RESET}")
+                elif message.startswith("Server:"):
+                    # Systémové zprávy (modře)
+                    print(f"\n{Colors.BRIGHT_BLUE}[SYSTEM] {message}{Colors.RESET}")
+                elif message.startswith("P2P informace:"):
+                    # Seznam P2P informací (cyan)
+                    print(f"\n{Colors.CYAN}{message}{Colors.RESET}")
+                elif message.startswith("[") and ":" in message and not message.startswith("ERROR") and not message.startswith("INFO"):
+                    # Chat zpráva od uživatele s časovým razítkem (zeleně)
+                    # Formát: "[HH:MM] Uživatel: zpráva"
+                    print(f"\n{Colors.BRIGHT_GREEN}{message}{Colors.RESET}")
                 elif ":" in message and not message.startswith("ERROR") and not message.startswith("INFO"):
-                    # Chat zpráva od uživatele (formát: "Uživatel: zpráva")
-                    print(f"\n{message}")
+                    # Chat zpráva od uživatele bez časového razítka (zeleně)
+                    print(f"\n{Colors.BRIGHT_GREEN}{message}{Colors.RESET}")
+                elif message.startswith("ERROR"):
+                    # Chyby (červeně)
+                    print(f"\n{Colors.RED}{message}{Colors.RESET}")
+                elif message.startswith("INFO"):
+                    # Info zprávy (žlutě)
+                    print(f"\n{Colors.BRIGHT_YELLOW}{message}{Colors.RESET}")
                 else:
-                    # Jiné zprávy (chyby, info, atd.)
-                    print(f"\n[Server] {message}")
+                    # Jiné zprávy (bíle)
+                    print(f"\n{Colors.WHITE}[Server] {message}{Colors.RESET}")
                 print("> ", end="", flush=True)
             # Timeout (message is None) je normální - pokračujeme v čekání
         except socket.timeout:
@@ -180,12 +236,20 @@ def main():
         
         print(f"✓ Připojeno k serveru na {DEFAULT_HOST}:{DEFAULT_PORT}")
         
-        # Volitelné: Odeslání uživatelského jména
+        # Volitelné: Odeslání uživatelského jména a P2P portu
         username = input("Zadejte vaše jméno (nebo Enter pro výchozí): ").strip()
-        if username:
-            send_message(client, f"USERNAME:{username}")
-        else:
-            send_message(client, "USERNAME:Guest")
+        if not username:
+            username = "Guest"
+        
+        p2p_port_input = input("Zadejte P2P port pro soukromé zprávy (nebo Enter pro výchozí 8081): ").strip()
+        try:
+            p2p_port = int(p2p_port_input) if p2p_port_input else 8081
+        except ValueError:
+            p2p_port = 8081
+            print(f"Neplatný port, použiji výchozí {p2p_port}")
+        
+        # Odeslání informací serveru
+        send_message(client, f"SETUP:{username}:{p2p_port}")
         
         # Spuštění vlákna pro přijímání zpráv (před zobrazením promptu)
         running.set()
@@ -218,11 +282,25 @@ def main():
                     send_message(client, "/quit")
                     print("Odpojování...")
                     break
-                
-                # Odeslání zprávy serveru (server ji automaticky pošle všem v chatu)
-                if not send_message(client, message):
-                    print("Chyba: Nepodařilo se odeslat zprávu")
-                    break
+                elif message.startswith("/getpeer ") and len(message.split()) >= 2:
+                    # Získání P2P informací o uživateli
+                    send_message(client, message)
+                elif message.startswith("/pm ") and len(message.split()) >= 3:
+                    # Soukromá zpráva přes server
+                    send_message(client, message)
+                elif message == "/peers":
+                    # Seznam všech uživatelů s P2P informacemi
+                    send_message(client, message)
+                elif message.startswith("/p2p ") and len(message.split()) >= 2:
+                    # Automatické připojení přes P2P
+                    target_username = message.split()[1]
+                    print(f"Získávám P2P informace o {target_username}...")
+                    send_message(client, f"/getpeer {target_username}")
+                else:
+                    # Odeslání zprávy serveru (server ji automaticky pošle všem v chatu)
+                    if not send_message(client, message):
+                        print("Chyba: Nepodařilo se odeslat zprávu")
+                        break
                 
                 # V chat módu všechny zprávy přicházejí přes receive thread
                 # (včetně vlastní zprávy, která se broadcastuje zpět)

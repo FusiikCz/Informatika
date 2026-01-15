@@ -2,7 +2,7 @@
  * Rozšířená socket server implementace v C++
  * Používá thread-per-client architekturu s length-prefixed protokolem
  * 
- * Kompatibilní s: Python, Java, C# klienty
+ * Kompatibilní s: Python klienty
  * 
  * Kompilace:
  *   g++ -std=c++11 -pthread server.cpp -o server
@@ -15,21 +15,32 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
+#include <chrono>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 
 // Konfigurace
 const int PORT = 8080;
 const int MAX_CLIENTS = 100;
 const size_t BUFFER_SIZE = 4096;
 const uint32_t MAX_MESSAGE_SIZE = 40960; // 40KB
+const double HEARTBEAT_INTERVAL = 300.0;  // Interval pro heartbeat (sekundy)
+const double HEARTBEAT_TIMEOUT = 100.0;   // Timeout pro heartbeat odpověď (sekundy)
+const int RATE_LIMIT_MESSAGES = 10;      // Maximální počet zpráv
+const double RATE_LIMIT_WINDOW = 1.0;    // Časové okno v sekundách
 
 // Struktura pro uložení informací o klientovi
 struct ClientInfo {
     int socket;
     std::string username;
+    int p2p_port;  // Port pro P2P připojení
+    double last_heartbeat;  // Čas posledního úspěšného heartbeat
+    double last_message_time;  // Čas poslední zprávy pro rate limiting
+    int message_count;  // Počet zpráv v aktuálním okně
 };
 
 // Sdílený seznam klientů
@@ -37,7 +48,7 @@ std::vector<ClientInfo> clients;
 std::mutex clients_mutex; // Mutex pro synchronizaci přístupu k seznamu klientů
 
 /**
- * Odešle zprávu s prefixem délky (kompatibilní s Python/Java/C#)
+ * Odešle zprávu s prefixem délky (kompatibilní s Python)
  * Formát: [4 byty délka (big-endian)][zpráva]
  */
 bool send_message(int sock, const std::string& message) {
@@ -62,7 +73,7 @@ bool send_message(int sock, const std::string& message) {
 }
 
 /**
- * Přijme zprávu s prefixem délky (kompatibilní s Python/Java/C#)
+ * Přijme zprávu s prefixem délky (kompatibilní s Python)
  */
 std::string receive_message(int sock) {
     // Přijetí délky zprávy (4 byty)
@@ -92,6 +103,113 @@ std::string receive_message(int sock) {
     }
     
     return message;
+}
+
+/**
+ * Získání aktuálního času ve formátu HH:MM
+ */
+std::string get_current_time() {
+    std::time_t now = std::time(nullptr);
+    std::tm* timeinfo = std::localtime(&now);
+    std::ostringstream oss;
+    oss << std::setfill('0') << std::setw(2) << timeinfo->tm_hour << ":"
+        << std::setw(2) << timeinfo->tm_min;
+    return oss.str();
+}
+
+/**
+ * Získání aktuálního času jako double (sekundy od epochy)
+ */
+double get_current_timestamp() {
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    return std::chrono::duration<double>(duration).count();
+}
+
+/**
+ * Kontrola rate limitingu pro klienta
+ */
+bool check_rate_limit(int client_fd) {
+    double current_time = get_current_timestamp();
+    std::lock_guard<std::mutex> lock(clients_mutex);
+    
+    for (auto& client : clients) {
+        if (client.socket == client_fd) {
+            // Kontrola, zda uplynulo dost času pro reset okna
+            if (current_time - client.last_message_time >= RATE_LIMIT_WINDOW) {
+                // Reset okna
+                client.last_message_time = current_time;
+                client.message_count = 1;
+                return true;
+            } else if (client.message_count < RATE_LIMIT_MESSAGES) {
+                // Zvýšení počtu zpráv
+                client.message_count++;
+                return true;
+            } else {
+                // Rate limit překročen
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * Aktualizace času posledního heartbeat pro klienta
+ */
+void update_heartbeat(int client_fd) {
+    double current_time = get_current_timestamp();
+    std::lock_guard<std::mutex> lock(clients_mutex);
+    
+    for (auto& client : clients) {
+        if (client.socket == client_fd) {
+            client.last_heartbeat = current_time;
+            break;
+        }
+    }
+}
+
+/**
+ * Heartbeat monitor - kontroluje připojení klientů
+ */
+void heartbeat_monitor() {
+    while (true) {
+        sleep(static_cast<unsigned int>(HEARTBEAT_INTERVAL));
+        double current_time = get_current_timestamp();
+        std::vector<int> disconnected;
+        
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex);
+            for (const auto& client : clients) {
+                // Kontrola, zda klient neodpovídá příliš dlouho
+                if (current_time - client.last_heartbeat > HEARTBEAT_TIMEOUT * 2) {
+                    std::cout << "Klient " << client.username << " neodpovídá na heartbeat - odpojování" << std::endl;
+                    disconnected.push_back(client.socket);
+                } else {
+                    // Odeslání ping zprávy
+                    if (!send_message(client.socket, "PING")) {
+                        disconnected.push_back(client.socket);
+                    }
+                }
+            }
+        }
+        
+        // Odstranění odpojených klientů
+        if (!disconnected.empty()) {
+            std::lock_guard<std::mutex> lock(clients_mutex);
+            clients.erase(
+                std::remove_if(clients.begin(), clients.end(),
+                    [&disconnected](const ClientInfo& c) {
+                        return std::find(disconnected.begin(), disconnected.end(), c.socket) != disconnected.end();
+                    }),
+                clients.end()
+            );
+            
+            for (int fd : disconnected) {
+                close(fd);
+            }
+        }
+    }
 }
 
 /**
@@ -127,14 +245,33 @@ void broadcast_message(const std::string& message, int exclude_socket = -1) {
  */
 void handle_client(int client_fd) {
     std::string username = "User";
+    int p2p_port = 8081;  // Výchozí P2P port
     
     try {
-        // Přijetí uživatelského jména (volitelné)
+        // Přijetí uživatelského jména a P2P portu (volitelné)
         std::string welcome_msg = receive_message(client_fd);
-        if (!welcome_msg.empty() && welcome_msg.find("USERNAME:") == 0) {
-            username = welcome_msg.substr(9);
-            if (username.length() > 20) username = username.substr(0, 20);
-            std::cout << "Klient nastavil jméno: " << username << std::endl;
+        if (!welcome_msg.empty()) {
+            if (welcome_msg.find("SETUP:") == 0) {
+                // Formát: SETUP:username:p2p_port
+                size_t pos1 = welcome_msg.find(":", 6);
+                size_t pos2 = welcome_msg.find(":", pos1 + 1);
+                if (pos1 != std::string::npos) {
+                    username = welcome_msg.substr(6, pos1 - 6);
+                    if (username.length() > 20) username = username.substr(0, 20);
+                }
+                if (pos2 != std::string::npos) {
+                    try {
+                        p2p_port = std::stoi(welcome_msg.substr(pos2 + 1));
+                    } catch (...) {
+                        p2p_port = 8081;
+                    }
+                }
+                std::cout << "Klient nastavil jméno: " << username << ", P2P port: " << p2p_port << std::endl;
+            } else if (welcome_msg.find("USERNAME:") == 0) {
+                username = welcome_msg.substr(9);
+                if (username.length() > 20) username = username.substr(0, 20);
+                std::cout << "Klient nastavil jméno: " << username << std::endl;
+            }
         }
         
         // Přidání klienta do seznamu (thread-safe)
@@ -145,15 +282,25 @@ void handle_client(int client_fd) {
                 close(client_fd);
                 return;
             }
-            clients.push_back({client_fd, username});
+            double current_time = get_current_timestamp();
+            clients.push_back({client_fd, username, p2p_port, current_time, current_time, 0});
             std::cout << "Klient připojen: " << username << ". Celkem klientů: " << clients.size() << std::endl;
         }
         
-        // Odeslání uvítací zprávy
-        send_message(client_fd, "Vítejte v chatu, " + username + "! Napište zprávu a stiskněte Enter. Použijte /help pro nápovědu.");
+        // Získání počtu připojených uživatelů
+        int user_count;
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex);
+            user_count = clients.size();
+        }
+        
+        // Odeslání uvítací zprávy s počtem uživatelů
+        std::string user_text = (user_count > 1) ? "uživatelé" : "uživatel";
+        send_message(client_fd, "Vítejte v chatu, " + username + "! [" + std::to_string(user_count) + " " + user_text + " online] Napište zprávu a stiskněte Enter. Použijte /help pro nápovědu.");
         
         // Broadcast o novém připojení
-        broadcast_message("Server: " + username + " se připojil k chatu", client_fd);
+        std::string current_time = get_current_time();
+        broadcast_message("[" + current_time + "] Server: " + username + " se připojil k chatu", client_fd);
         
         // Hlavní smyčka pro komunikaci s klientem
         while (true) {
@@ -163,6 +310,24 @@ void handle_client(int client_fd) {
                 // Klient se odpojil
                 break;
             }
+            
+            // Zpracování PONG odpovědi na heartbeat
+            if (message == "PONG") {
+                update_heartbeat(client_fd);
+                continue;
+            }
+            
+            // Kontrola rate limitingu (kromě systémových příkazů)
+            if (message.length() == 0 || message[0] != '/') {
+                if (!check_rate_limit(client_fd)) {
+                    send_message(client_fd, "ERROR: Příliš mnoho zpráv! Maximálně " + std::to_string(RATE_LIMIT_MESSAGES) + " zpráv za " + std::to_string(RATE_LIMIT_WINDOW) + " sekund.");
+                    std::cout << "Rate limit překročen pro " << username << " (" << client_fd << ")" << std::endl;
+                    continue;
+                }
+            }
+            
+            // Aktualizace heartbeat při jakékoli aktivitě
+            update_heartbeat(client_fd);
             
             std::cout << "Přijato od " << username << " (" << client_fd << "): " << message << std::endl;
             
@@ -179,14 +344,61 @@ void handle_client(int client_fd) {
                         user_list += clients[i].username;
                     }
                     send_message(client_fd, user_list);
+                } else if (message.find("/getpeer ") == 0 && message.length() > 9) {
+                    // Získání P2P informací o uživateli
+                    std::string target_username = message.substr(9);
+                    std::lock_guard<std::mutex> lock(clients_mutex);
+                    bool found = false;
+                    for (const auto& client : clients) {
+                        if (client.username == target_username) {
+                            // Získání IP adresy z socketu (zjednodušené - použijeme localhost)
+                            send_message(client_fd, "PEER_INFO:" + client.username + ":127.0.0.1:" + std::to_string(client.p2p_port));
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        send_message(client_fd, "ERROR: Uživatel '" + target_username + "' není připojen");
+                    }
+                } else if (message.find("/pm ") == 0) {
+                    // Soukromá zpráva přes server
+                    size_t pos1 = message.find(" ", 4);
+                    size_t pos2 = message.find(" ", pos1 + 1);
+                    if (pos1 != std::string::npos && pos2 != std::string::npos) {
+                        std::string target_username = message.substr(4, pos1 - 4);
+                        std::string pm_message = message.substr(pos2 + 1);
+                        std::lock_guard<std::mutex> lock(clients_mutex);
+                        bool found = false;
+                        for (auto& client : clients) {
+                            if (client.username == target_username) {
+                                send_message(client.socket, "[PM od " + username + "] " + pm_message);
+                                send_message(client_fd, "INFO: Soukromá zpráva odeslána " + target_username);
+                                found = true;
+                                std::cout << "Soukromá zpráva od " << username << " k " << target_username << ": " << pm_message << std::endl;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            send_message(client_fd, "ERROR: Uživatel '" + target_username + "' není připojen");
+                        }
+                    }
+                } else if (message == "/peers") {
+                    // Seznam všech uživatelů s P2P informacemi
+                    std::lock_guard<std::mutex> lock(clients_mutex);
+                    std::string peer_list = "P2P informace:\n";
+                    for (const auto& client : clients) {
+                        peer_list += client.username + " (127.0.0.1:" + std::to_string(client.p2p_port) + ")\n";
+                    }
+                    send_message(client_fd, peer_list);
                 } else if (message == "/help") {
-                    send_message(client_fd, "=== Chat Server - Nápověda ===\nVšechny vaše zprávy se automaticky posílají všem uživatelům v chatu.\n\nDostupné příkazy:\n/quit - Odpojení ze serveru\n/list - Seznam připojených uživatelů\n/help - Zobrazení této nápovědy\n\nPro odeslání zprávy jednoduše napište text a stiskněte Enter.");
+                    send_message(client_fd, "=== Chat Server - Nápověda ===\nVšechny vaše zprávy se automaticky posílají všem uživatelům v chatu.\n\nDostupné příkazy:\n/quit - Odpojení ze serveru\n/list - Seznam připojených uživatelů\n/pm <uživatel> <zpráva> - Soukromá zpráva přes server\n/getpeer <uživatel> - Získání P2P informací\n/peers - Seznam všech s P2P informacemi\n/help - Zobrazení této nápovědy\n\nPro odeslání zprávy jednoduše napište text a stiskněte Enter.");
                 } else {
                     send_message(client_fd, "ERROR: Neznámý příkaz. Použijte /help");
                 }
             } else {
-                // Chat zpráva - broadcast všem klientům
-                std::string chat_message = username + ": " + message;
+                // Chat zpráva - broadcast všem klientům s časovým razítkem
+                std::string current_time = get_current_time();
+                std::string chat_message = "[" + current_time + "] " + username + ": " + message;
                 std::cout << "Chat zpráva od " << username << ": " << message << std::endl;
                 broadcast_message(chat_message);
             }
@@ -196,7 +408,8 @@ void handle_client(int client_fd) {
     }
     
     // Broadcast o odpojení
-    broadcast_message("Server: " + username + " opustil chat");
+    std::string current_time = get_current_time();
+    broadcast_message("[" + current_time + "] Server: " + username + " opustil chat");
     
     // Odstranění klienta ze seznamu (thread-safe)
     {
@@ -253,9 +466,16 @@ int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "Server naslouchá na portu " << PORT << "..." << std::endl;
     std::cout << "Maximální počet klientů: " << MAX_CLIENTS << std::endl;
-    std::cout << "Kompatibilní s: Python, Java, C# klienty" << std::endl;
+    std::cout << "Heartbeat interval: " << HEARTBEAT_INTERVAL << "s, Timeout: " << HEARTBEAT_TIMEOUT << "s" << std::endl;
+    std::cout << "Rate limit: " << RATE_LIMIT_MESSAGES << " zpráv za " << RATE_LIMIT_WINDOW << "s" << std::endl;
+    std::cout << "Kompatibilní s: Python klienty" << std::endl;
     std::cout << "Stiskněte Ctrl+C pro ukončení" << std::endl;
     std::cout << "========================================" << std::endl;
+    
+    // Spuštění heartbeat monitor thread
+    std::thread heartbeat_thread(heartbeat_monitor);
+    heartbeat_thread.detach();
+    std::cout << "Heartbeat monitor spuštěn" << std::endl;
     
     // Hlavní smyčka - přijímání nových klientů
     while (true) {

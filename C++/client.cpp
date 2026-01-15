@@ -1,6 +1,6 @@
 /**
  * Rozšířená socket klient implementace v C++
- * Používá length-prefixed protokol (kompatibilní s Python/Java/C# servery)
+ * Používá length-prefixed protokol (kompatibilní s Python servery)
  * 
  * Kompilace:
  *   g++ -std=c++11 client.cpp -o client
@@ -15,12 +15,30 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+// ANSI escape kódy pro barvy
+namespace Colors {
+    const char* RESET = "\033[0m";
+    const char* BOLD = "\033[1m";
+    // Barvy textu
+    const char* RED = "\033[31m";
+    const char* GREEN = "\033[32m";
+    const char* YELLOW = "\033[33m";
+    const char* BLUE = "\033[34m";
+    const char* MAGENTA = "\033[35m";
+    const char* CYAN = "\033[36m";
+    const char* WHITE = "\033[37m";
+    // Světlé barvy
+    const char* BRIGHT_BLUE = "\033[94m";
+    const char* BRIGHT_GREEN = "\033[92m";
+    const char* BRIGHT_YELLOW = "\033[93m";
+}
+
 // Konfigurace
 const char* HOST = "127.0.0.1";
 const int PORT = 8080;
 
 /**
- * Odešle zprávu s prefixem délky (kompatibilní s Python/Java/C# servery)
+ * Odešle zprávu s prefixem délky (kompatibilní s Python servery)
  */
 bool send_message(int sock, const std::string& message) {
     uint32_t message_length = htonl(static_cast<uint32_t>(message.length()));
@@ -43,7 +61,7 @@ bool send_message(int sock, const std::string& message) {
 }
 
 /**
- * Přijme zprávu s prefixem délky (kompatibilní s Python/Java/C# servery)
+ * Přijme zprávu s prefixem délky (kompatibilní s Python servery)
  */
 std::string receive_message(int sock) {
     uint32_t message_length_net;
@@ -113,16 +131,29 @@ int main() {
         std::cout << welcome << std::endl;
     }
     
-    // Volitelné: Odeslání uživatelského jména
+    // Volitelné: Odeslání uživatelského jména a P2P portu
     std::string username;
     std::cout << "Zadejte vaše jméno (nebo Enter pro výchozí): ";
     std::getline(std::cin, username);
-    
-    if (!username.empty()) {
-        send_message(sock, "USERNAME:" + username);
-    } else {
-        send_message(sock, "USERNAME:Guest");
+    if (username.empty()) {
+        username = "Guest";
     }
+    
+    std::string p2p_port_str;
+    std::cout << "Zadejte P2P port pro soukromé zprávy (nebo Enter pro výchozí 8081): ";
+    std::getline(std::cin, p2p_port_str);
+    int p2p_port = 8081;
+    if (!p2p_port_str.empty()) {
+        try {
+            p2p_port = std::stoi(p2p_port_str);
+        } catch (...) {
+            p2p_port = 8081;
+            std::cout << "Neplatný port, použiji výchozí " << p2p_port << std::endl;
+        }
+    }
+    
+    // Odeslání informací serveru
+    send_message(sock, "SETUP:" + username + ":" + std::to_string(p2p_port));
     
     std::cout << "\n=== Chat připojen ===" << std::endl;
     std::cout << "Napište zprávu a stiskněte Enter pro odeslání všem uživatelům" << std::endl;
@@ -141,11 +172,15 @@ int main() {
         if (message == "quit" || message == "/quit" || message == "exit" || message == "/exit") {
             send_message(sock, "/quit");
             break;
-        }
-        
-        if (!send_message(sock, message)) {
-            std::cerr << "Chyba při odesílání zprávy" << std::endl;
-            break;
+        } else if (message.find("/getpeer ") == 0 || message.find("/pm ") == 0 || message == "/peers") {
+            // P2P příkazy
+            send_message(sock, message);
+        } else {
+            // Odeslání zprávy serveru
+            if (!send_message(sock, message)) {
+                std::cerr << "Chyba při odesílání zprávy" << std::endl;
+                break;
+            }
         }
         
         // V chat módu zprávy přicházejí asynchronně
@@ -157,17 +192,59 @@ int main() {
             break;
         }
         
-        // Rozlišení mezi systémovými zprávami a chat zprávami
-        if (response.find("Server:") == 0) {
-            std::cout << "[SYSTEM] " << response << std::endl;
+        // Zpracování heartbeat ping
+        if (response == "PING") {
+            // Odpověď na ping
+            send_message(sock, "PONG");
+            continue;
+        }
+        
+        // Rozlišení mezi systémovými zprávami a chat zprávami s barvami
+        if (response.find("PEER_INFO:") == 0) {
+            // P2P informace (cyan)
+            size_t pos1 = response.find(":", 10);
+            size_t pos2 = response.find(":", pos1 + 1);
+            size_t pos3 = response.find(":", pos2 + 1);
+            if (pos1 != std::string::npos && pos2 != std::string::npos && pos3 != std::string::npos) {
+                std::string peer_username = response.substr(10, pos1 - 10);
+                std::string peer_ip = response.substr(pos1 + 1, pos2 - pos1 - 1);
+                std::string peer_port = response.substr(pos2 + 1, pos3 - pos2 - 1);
+                std::cout << "\n" << Colors::CYAN << "[INFO] P2P informace o " << peer_username << ":" << Colors::RESET << std::endl;
+                std::cout << "  IP: " << peer_ip << std::endl;
+                std::cout << "  Port: " << peer_port << std::endl;
+                std::cout << "  Pro připojení použijte P2P aplikaci:" << std::endl;
+                std::cout << "    cd P2P/C++" << std::endl;
+                std::cout << "    ./peer2peer" << std::endl;
+                std::cout << "    /connect " << peer_ip << " " << peer_port << std::endl;
+            }
+        } else if (response.find("[PM od") == 0) {
+            // Soukromá zpráva přes server (magenta)
+            std::cout << "\n" << Colors::MAGENTA << response << Colors::RESET << std::endl;
+        } else if (response.find("Server:") == 0) {
+            // Systémové zprávy (modře)
+            std::cout << "\n" << Colors::BRIGHT_BLUE << "[SYSTEM] " << response << Colors::RESET << std::endl;
+        } else if (response.find("P2P informace:") == 0) {
+            // Seznam P2P informací (cyan)
+            std::cout << "\n" << Colors::CYAN << response << Colors::RESET << std::endl;
+        } else if (response.find("[") == 0 && response.find(":") != std::string::npos && 
+                   response.find("ERROR") == std::string::npos && 
+                   response.find("INFO") == std::string::npos) {
+            // Chat zpráva od uživatele s časovým razítkem (zeleně)
+            std::cout << "\n" << Colors::BRIGHT_GREEN << response << Colors::RESET << std::endl;
         } else if (response.find(":") != std::string::npos && 
                    response.find("ERROR") == std::string::npos && 
                    response.find("INFO") == std::string::npos) {
-            // Chat zpráva od uživatele
-            std::cout << response << std::endl;
+            // Chat zpráva od uživatele bez časového razítka (zeleně)
+            std::cout << "\n" << Colors::BRIGHT_GREEN << response << Colors::RESET << std::endl;
+        } else if (response.find("ERROR") == 0) {
+            // Chyby (červeně)
+            std::cout << "\n" << Colors::RED << response << Colors::RESET << std::endl;
+        } else if (response.find("INFO") == 0) {
+            // Info zprávy (žlutě)
+            std::cout << "\n" << Colors::BRIGHT_YELLOW << response << Colors::RESET << std::endl;
         } else {
-            // Jiné zprávy
-            std::cout << "[Server] " << response << std::endl;
+            // Jiné zprávy (bíle)
+            std::cout << "\n" << Colors::WHITE << "[Server] " << response << Colors::RESET << std::endl;
         }
     }
     

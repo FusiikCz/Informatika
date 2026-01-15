@@ -1,7 +1,7 @@
 
 # Peer-to-Peer (P2P) Implementace
 
-Tento adresář obsahuje P2P (Peer-to-Peer) implementace ve všech podporovaných jazycích.
+Tento adresář obsahuje P2P (Peer-to-Peer) implementace v Pythonu a C++.
 
 ## Přehled
 
@@ -13,8 +13,6 @@ P2P architektura umožňuje každému uzlu současně fungovat jako server i kli
 P2P/
 ├── Python/      # Python P2P implementace
 ├── C++/         # C++ P2P implementace
-├── Java/        # Java P2P implementace
-├── C#/          # C# P2P implementace
 └── README.md    # Tento soubor
 ```
 
@@ -23,11 +21,8 @@ P2P/
 Všechny P2P implementace používají **stejný protokol** (length-prefixed messages), takže peery v různých jazycích mohou komunikovat mezi sebou:
 
 - ✅ Python peer ↔ C++ peer
-- ✅ Python peer ↔ Java peer
-- ✅ Python peer ↔ C# peer
-- ✅ C++ peer ↔ Java peer
-- ✅ C++ peer ↔ C# peer
-- ✅ Java peer ↔ C# peer
+- ✅ Python peer ↔ Python peer
+- ✅ C++ peer ↔ C++ peer
 
 ### Příkazy
 
@@ -75,17 +70,6 @@ Toto zajišťuje:
 - ✅ Efektivní správa paměti
 - ✅ POSIX sockety
 
-### Java specifické:
-
-- ✅ Object-oriented design
-- ✅ Try-with-resources
-- ✅ Platformní nezávislost
-
-### C# specifické:
-
-- ✅ .NET framework
-- ✅ Moderní C# syntax
-- ✅ Async/await podpora (možná rozšíření)
 
 ## Příklad cross-language komunikace
 
@@ -93,18 +77,11 @@ Toto zajišťuje:
 # Terminal 1: Python peer na portu 8081
 python peer2peer.py
 
-# Terminal 2: Java peer na portu 8082
-java Peer2Peer
-
-# Terminal 3: C++ peer na portu 8083
+# Terminal 2: C++ peer na portu 8082
 ./peer2peer
 
-# Z Java peera se připojte k Python peeru:
+# Z C++ peera se připojte k Python peeru:
 /connect 127.0.0.1 8081
-
-# Z C++ peera se připojte k oběma:
-/connect 127.0.0.1 8081
-/connect 127.0.0.1 8082
 
 # Odeslání broadcast zprávy z Python peera:
 /broadcast Hello from Python!
