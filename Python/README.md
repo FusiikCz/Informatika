@@ -21,23 +21,23 @@ Tato implementace používá standardní Python moduly pro vytvoření robustní
 ### Nové vylepšení:
 
 #### Server (`server.py`):
-- ✅ **Robustní error handling** - kompletní zpracování všech typů chyb
-- ✅ **Logging systém** - strukturované logování s časovými razítky
-- ✅ **Message protocol** - prefix délky zprávy pro spolehlivou komunikaci
-- ✅ **Broadcast** - odesílání zpráv všem připojeným klientům
-- ✅ **Uživatelská jména** - podpora uživatelských jmen
-- ✅ **Příkazy** - `/quit`, `/list`, `/broadcast`, `/help`
-- ✅ **Max klienti** - limit na maximální počet připojených klientů
-- ✅ **Connection timeout** - automatické odpojení neaktivních klientů
-- ✅ **Graceful shutdown** - korektní ukončení všech připojení
+-  **Robustní error handling** - kompletní zpracování všech typů chyb
+-  **Logging systém** - strukturované logování s časovými razítky
+-  **Message protocol** - prefix délky zprávy pro spolehlivou komunikaci
+-  **Broadcast** - odesílání zpráv všem připojeným klientům
+-  **Uživatelská jména** - podpora uživatelských jmen
+-  **Příkazy** - `/quit`, `/list`, `/broadcast`, `/help`
+-  **Max klienti** - limit na maximální počet připojených klientů
+-  **Connection timeout** - automatické odpojení neaktivních klientů
+-  **Graceful shutdown** - korektní ukončení všech připojení
 
 #### Klient (`client.py`):
-- ✅ **Asynchronní přijímání** - samostatné vlákno pro přijímání zpráv
-- ✅ **Lepší UX** - přehledné uživatelské rozhraní
-- ✅ **Timeout support** - ochrana proti zablokování
-- ✅ **Uživatelské jméno** - možnost nastavit vlastní jméno
-- ✅ **Error handling** - robustní zpracování chyb připojení
-- ✅ **Příkazy** - podpora všech serverových příkazů
+-  **Asynchronní přijímání** - samostatné vlákno pro přijímání zpráv
+-  **Lepší UX** - přehledné uživatelské rozhraní
+-  **Timeout support** - ochrana proti zablokování
+-  **Uživatelské jméno** - možnost nastavit vlastní jméno
+-  **Error handling** - robustní zpracování chyb připojení
+-  **Příkazy** - podpora všech serverových příkazů
 
 ### Hlavní metody:
 

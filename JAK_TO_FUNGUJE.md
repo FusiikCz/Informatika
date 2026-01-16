@@ -1,6 +1,4 @@
-# Jak to funguje? - Jednoduché vysvětlení
-
-## Co jsme vytvořili?
+# Jak to funguje?
 
 Vytvořili jsme **chat server** - program, který umožňuje více lidem chatovat současně přes síť.
 
@@ -50,10 +48,6 @@ Server pošle všem: "Server: Alice opustil chat"
 Alice se odpojí
 ```
 
-## Protokol komunikace
-
-### Co je to protokol?
-Je to "jazyk", kterým spolu programy mluví. Všechny naše programy používají **stejný protokol**, takže mohou spolu komunikovat.
 
 ### Jak vypadá zpráva?
 ```
@@ -73,7 +67,7 @@ Je to "jazyk", kterým spolu programy mluví. Všechny naše programy používaj
 ## Cross-language kompatibilita
 
 ### Co to znamená?
-Programy v různých jazycích mohou spolu komunikovat!
+Programy v různých jazycích mohou spolu komunikovat! C++ a Python
 
 ### Jak to funguje?
 Všechny programy používají **stejný protokol**:
